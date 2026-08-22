@@ -90,6 +90,103 @@ class VariableCandidate {
   final double confidence;
 }
 
+class CaptureRecord {
+  CaptureRecord({
+    required this.id,
+    required this.sourceLabel,
+    required this.captureMethod,
+    required this.contentHash,
+    required this.capturedAt,
+    this.sourceUrl,
+    this.rawPath,
+  });
+
+  final String id;
+  final String sourceLabel;
+  final String captureMethod;
+  final String contentHash;
+  final DateTime capturedAt;
+  final String? sourceUrl;
+  final String? rawPath;
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'sourceLabel': sourceLabel,
+    'captureMethod': captureMethod,
+    'contentHash': contentHash,
+    'capturedAt': capturedAt.toUtc().toIso8601String(),
+    'sourceUrl': sourceUrl,
+    'rawPath': rawPath,
+  };
+}
+
+class RelatedAsset {
+  RelatedAsset({
+    required this.asset,
+    required this.score,
+    required this.reason,
+  });
+  final AssetRecord asset;
+  final double score;
+  final String reason;
+}
+
+class Entitlement {
+  Entitlement({
+    this.tier = 'free',
+    this.urlImportsUsed = 0,
+    this.urlImportLimit = 3,
+  });
+  final String tier;
+  final int urlImportsUsed;
+  final int urlImportLimit;
+
+  bool get isPro => tier == 'pro' || tier == 'team';
+  bool get canImportUrl => isPro || urlImportsUsed < urlImportLimit;
+
+  Map<String, dynamic> toJson() => {
+    'tier': tier,
+    'urlImportsUsed': urlImportsUsed,
+    'urlImportLimit': urlImportLimit,
+  };
+
+  factory Entitlement.fromJson(Map<String, dynamic> json) => Entitlement(
+    tier: json['tier']?.toString() ?? 'free',
+    urlImportsUsed: (json['urlImportsUsed'] as num?)?.toInt() ?? 0,
+    urlImportLimit: (json['urlImportLimit'] as num?)?.toInt() ?? 3,
+  );
+}
+
+class ProductEvent {
+  ProductEvent({
+    required this.name,
+    required this.createdAt,
+    this.properties = const {},
+  });
+  final String name;
+  final DateTime createdAt;
+  final Map<String, Object?> properties;
+
+  Map<String, dynamic> toJson() => {
+    'name': name,
+    'createdAt': createdAt.toUtc().toIso8601String(),
+    'properties': properties,
+  };
+}
+
+class ProviderCapability {
+  ProviderCapability({
+    required this.name,
+    required this.models,
+    required this.supportsLiveRun,
+    required this.costLabel,
+  });
+  final String name;
+  final List<String> models;
+  final bool supportsLiveRun;
+  final String costLabel;
+}
+
 class ImportAnalysis {
   ImportAnalysis({
     required this.raw,
@@ -135,6 +232,7 @@ class RunRecord {
     required this.status,
     required this.createdAt,
     this.error,
+    this.inputs = const {},
   });
   final String id;
   final String assetTitle;
@@ -143,6 +241,7 @@ class RunRecord {
   final String status;
   final DateTime createdAt;
   final String? error;
+  final Map<String, String> inputs;
 
   Map<String, dynamic> toJson() => {
     'id': id,
@@ -152,6 +251,7 @@ class RunRecord {
     'status': status,
     'createdAt': createdAt.toIso8601String(),
     'error': error,
+    'inputs': inputs,
   };
 
   factory RunRecord.fromJson(Map<String, dynamic> json) => RunRecord(
@@ -163,6 +263,7 @@ class RunRecord {
     createdAt:
         DateTime.tryParse(json['createdAt'] as String? ?? '') ?? DateTime.now(),
     error: json['error'] as String?,
+    inputs: Map<String, String>.from(json['inputs'] as Map? ?? const {}),
   );
 }
 
@@ -434,14 +535,191 @@ class PromptRepository {
     );
   }
 
+  Future<CaptureRecord> captureImport(
+    String raw,
+    String sourceLabel, {
+    String? sourceUrl,
+    String captureMethod = 'paste',
+  }) async {
+    if (_current == null) throw Exception('No project is open.');
+    final hash = _hash(raw.trim());
+    final capturesDir = Directory(
+      '${_current!.path}${Platform.pathSeparator}.promptworkspace${Platform.pathSeparator}imports',
+    );
+    await capturesDir.create(recursive: true);
+    final rawPath = '${capturesDir.path}${Platform.pathSeparator}$hash.txt';
+    final rawFile = File(rawPath);
+    if (!await rawFile.exists()) await rawFile.writeAsString(raw);
+    final capture = CaptureRecord(
+      id: 'capture:${_randomId()}',
+      sourceLabel: sourceLabel,
+      captureMethod: captureMethod,
+      contentHash: hash,
+      capturedAt: DateTime.now(),
+      sourceUrl: sourceUrl,
+      rawPath: rawPath,
+    );
+    final log = File(
+      '${_current!.path}${Platform.pathSeparator}.promptworkspace${Platform.pathSeparator}captures.jsonl',
+    );
+    await log.parent.create(recursive: true);
+    await log.writeAsString(
+      '${jsonEncode(capture.toJson())}\n',
+      mode: FileMode.append,
+    );
+    return capture;
+  }
+
+  Future<List<RelatedAsset>> findRelatedAssets(
+    AssetRecord candidate, {
+    int limit = 3,
+  }) async {
+    final existing = await loadAssets();
+    final candidateTokens = _tokens('${candidate.title} ${candidate.content}');
+    final results = <RelatedAsset>[];
+    for (final asset in existing) {
+      if (asset.id == candidate.id) continue;
+      final tokens = _tokens('${asset.title} ${asset.content}');
+      final overlap = candidateTokens.intersection(tokens).length;
+      final variableOverlap = candidate.variables
+          .map((v) => v.name)
+          .toSet()
+          .intersection(asset.variables.map((v) => v.name).toSet())
+          .length;
+      final score = candidateTokens.isEmpty
+          ? 0.0
+          : (((overlap / candidateTokens.length) * 0.8) +
+                    (variableOverlap * 0.05))
+                .toDouble();
+
+      if (score > 0.06)
+        results.add(
+          RelatedAsset(
+            asset: asset,
+            score: score,
+            reason: variableOverlap > 0 ? 'shared variables' : 'shared wording',
+          ),
+        );
+    }
+    results.sort((a, b) => b.score.compareTo(a.score));
+    return results.take(limit).toList();
+  }
+
+  Future<void> updateAsset(AssetRecord asset, String body) async {
+    final file = File(asset.path);
+    if (!await file.exists()) throw Exception('Asset file not found.');
+    final raw = await file.readAsString();
+    final now = DateTime.now().toUtc().toIso8601String();
+    final hash = _hash(body.trim());
+    var updated = raw.replaceFirst(
+      RegExp(r'updated_at:\s*[^\n]+'),
+      'updated_at: $now',
+    );
+    if (updated.contains('content_hash:')) {
+      updated = updated.replaceFirst(
+        RegExp(r'content_hash:\s*[^\n]+'),
+        'content_hash: $hash',
+      );
+    } else if (updated.startsWith('---')) {
+      updated = updated.replaceFirst('---\n', '---\ncontent_hash: $hash\n');
+    }
+    final marker = updated.indexOf('\n---', 3);
+    if (marker >= 0) {
+      updated =
+          '${updated.substring(0, marker + 1)}${body.trim()}\n${updated.substring(marker)}';
+    } else {
+      updated = '$body\n';
+    }
+    await file.writeAsString(updated);
+    await _writeIndex(await loadAssets());
+  }
+
+  Future<String> fetchSafeUrl(String rawUrl) async {
+    final parsed = Uri.tryParse(rawUrl.trim());
+    if (parsed == null || !isSafeHttpUrl(parsed))
+      throw Exception('Only public HTTP(S) URLs are supported.');
+    var uri = parsed;
+
+    final client = http.Client();
+    try {
+      late http.Response response;
+      for (var redirect = 0; redirect <= 3; redirect++) {
+        response = await client
+            .get(uri, headers: {'User-Agent': 'PromptflowOS/0.2'})
+            .timeout(const Duration(seconds: 12));
+        if (response.statusCode < 300 || response.statusCode >= 400) break;
+        final location = response.headers['location'];
+        final next = location == null ? null : uri.resolve(location);
+        if (next == null || !isSafeHttpUrl(next))
+          throw Exception('The URL redirected to an unsafe target.');
+        uri = next;
+        if (redirect == 3) throw Exception('Too many redirects.');
+      }
+      if (response.statusCode < 200 || response.statusCode >= 300)
+        throw Exception('URL returned HTTP ${response.statusCode}.');
+      if (response.bodyBytes.length > 2 * 1024 * 1024)
+        throw Exception('The imported page is larger than 2 MB.');
+      final contentType = response.headers['content-type'] ?? '';
+      if (contentType.contains('text/html')) return _stripHtml(response.body);
+      return response.body;
+    } finally {
+      client.close();
+    }
+  }
+
+  static bool isSafeHttpUrl(Uri uri) {
+    if (uri.scheme != 'http' && uri.scheme != 'https') return false;
+    final host = uri.host.toLowerCase();
+    if (host.isEmpty ||
+        host == 'localhost' ||
+        host.endsWith('.local') ||
+        host == '0.0.0.0')
+      return false;
+    final ip = InternetAddress.tryParse(host);
+    if (ip == null) return true;
+    if (ip.isLoopback || ip.isLinkLocal || ip.isMulticast) return false;
+    final value = ip.rawAddress;
+    if (value.isNotEmpty && value.first == 10) return false;
+    if (value.length >= 2 && value.first == 192 && value[1] == 168)
+      return false;
+    if (value.length >= 2 &&
+        value.first == 172 &&
+        value[1] >= 16 &&
+        value[1] <= 31)
+      return false;
+    return true;
+  }
+
+  static Set<String> _tokens(String value) => value
+      .toLowerCase()
+      .split(RegExp(r'[^a-z0-9]+'))
+      .where((token) => token.length >= 4)
+      .toSet();
+  static String _stripHtml(String html) => html
+      .replaceAll(
+        RegExp(r'<script[\\s\\S]*?</script>', caseSensitive: false),
+        '',
+      )
+      .replaceAll(RegExp(r'<style[\\s\\S]*?</style>', caseSensitive: false), '')
+      .replaceAll(RegExp(r'<[^>]+>'), ' ')
+      .replaceAll(RegExp(r'\\s+'), ' ')
+      .trim();
+
   Future<AssetRecord> saveImport(
     ImportAnalysis analysis, {
     required String destinationKind,
     required String mode,
     required bool convertVariables,
     String? projectContext,
+    String? sourceUrl,
     List<AssetRecord> composeWith = const [],
   }) async {
+    await captureImport(
+      analysis.raw,
+      analysis.sourceLabel,
+      sourceUrl: sourceUrl,
+      captureMethod: sourceUrl == null ? 'paste-or-file' : 'url',
+    );
     final safeKind = destinationKind == 'template'
         ? 'template'
         : destinationKind;
@@ -479,13 +757,16 @@ class PromptRepository {
     );
     final now = DateTime.now().toUtc().toIso8601String();
     final refs = composeWith.map((asset) => asset.id).toList();
+    final sourceUrlLine = sourceUrl == null
+        ? ''
+        : '  source_url: ${_yamlScalar(sourceUrl)}\\n';
     final changed = <String>[];
     if (convertVariables && analysis.variables.isNotEmpty)
       changed.add('variables');
     if (mode == 'adapted') changed.add('project-context');
     if (composeWith.isNotEmpty) changed.add('composition');
     final frontmatter =
-        '''---\nschema: document/v1\nid: $id\nkind: $safeKind\ntitle: ${_yamlScalar(analysis.title)}\nsummary: ${_yamlScalar(analysis.objective)}\ncreated_at: $now\nupdated_at: $now\nstatus: draft\ntags: [imported, reusable]\nderived_from: [${refs.join(', ')}]\ninputs:\n${analysis.variables.isEmpty ? '  []' : analysis.variables.map((v) => '  - name: ${v.name}\n    type: ${v.type}\n    required: ${v.required}\n    secret: false').join('\n')}\nprovenance:\n  source_type: ${composeWith.isNotEmpty ? 'composed' : 'imported'}\n  source_label: ${_yamlScalar(analysis.sourceLabel)}\n  source_refs: [${refs.join(', ')}]\n  imported_at: $now\n  content_hash: ${analysis.contentHash}\n  adaptation:\n    mode: $mode\n    project_id: ${_projectId()}\n    changed_sections: [${changed.join(', ')}]\nimport_analysis:\n  suggested_kind: ${analysis.suggestedKind}\n  objective: ${_yamlScalar(analysis.objective)}\n  confidence: ${analysis.confidence.toStringAsFixed(2)}\n---\n\n''';
+        '''---\nschema: document/v1\nid: $id\nkind: $safeKind\ntitle: ${_yamlScalar(analysis.title)}\nsummary: ${_yamlScalar(analysis.objective)}\ncreated_at: $now\nupdated_at: $now\nstatus: draft\ntags: [imported, reusable]\nderived_from: [${refs.join(', ')}]\ninputs:\n${analysis.variables.isEmpty ? '  []' : analysis.variables.map((v) => '  - name: ${v.name}\n    type: ${v.type}\n    required: ${v.required}\n    secret: false').join('\n')}\nprovenance:\n  source_type: ${composeWith.isNotEmpty ? 'composed' : 'imported'}\n  source_label: ${_yamlScalar(analysis.sourceLabel)}\n$sourceUrlLine  source_refs: [${refs.join(', ')}]\n  imported_at: $now\n  content_hash: ${analysis.contentHash}\n  adaptation:\n    mode: $mode\n    project_id: ${_projectId()}\n    changed_sections: [${changed.join(', ')}]\nimport_analysis:\n  suggested_kind: ${analysis.suggestedKind}\n  objective: ${_yamlScalar(analysis.objective)}\n  confidence: ${analysis.confidence.toStringAsFixed(2)}\n---\n\n''';
     await file.writeAsString('$frontmatter$content\n');
     final capture = File(
       '${_current!.path}${Platform.pathSeparator}.promptworkspace${Platform.pathSeparator}imports${Platform.pathSeparator}${analysis.contentHash.replaceFirst('sha256:', '')}.txt',
@@ -510,6 +791,56 @@ class PromptRepository {
     return null;
   }
 
+  Future<Entitlement> loadEntitlement() async {
+    if (_current == null) return Entitlement();
+    final file = File(
+      '${_current!.path}${Platform.pathSeparator}.promptworkspace${Platform.pathSeparator}entitlement.json',
+    );
+    if (!await file.exists()) return Entitlement();
+    try {
+      return Entitlement.fromJson(
+        Map<String, dynamic>.from(jsonDecode(await file.readAsString()) as Map),
+      );
+    } catch (_) {
+      return Entitlement();
+    }
+  }
+
+  Future<void> saveEntitlement(Entitlement entitlement) async {
+    if (_current == null) return;
+    final file = File(
+      '${_current!.path}${Platform.pathSeparator}.promptworkspace${Platform.pathSeparator}entitlement.json',
+    );
+    await file.parent.create(recursive: true);
+    await file.writeAsString(jsonEncode(entitlement.toJson()));
+  }
+
+  Future<void> recordEvent(
+    String name, {
+    Map<String, Object?> properties = const {},
+  }) async {
+    if (_current == null) return;
+    final safeProperties = <String, Object?>{};
+    for (final entry in properties.entries) {
+      if (entry.value is String && (entry.value as String).length > 120)
+        continue;
+      safeProperties[entry.key] = entry.value;
+    }
+    final event = ProductEvent(
+      name: name,
+      createdAt: DateTime.now(),
+      properties: safeProperties,
+    );
+    final file = File(
+      '${_current!.path}${Platform.pathSeparator}.promptworkspace${Platform.pathSeparator}events.jsonl',
+    );
+    await file.parent.create(recursive: true);
+    await file.writeAsString(
+      '${jsonEncode(event.toJson())}\n',
+      mode: FileMode.append,
+    );
+  }
+
   Future<List<RunRecord>> loadRuns() async {
     if (_current == null) return [];
     final file = File(
@@ -529,11 +860,14 @@ class PromptRepository {
   Future<RunRecord> runAsset(
     AssetRecord asset, {
     required String provider,
-    String input = '',
+    Map<String, String> inputs = const {},
   }) async {
     final rendered = asset.content.replaceAllMapped(
       RegExp(r'\{\{\s*([A-Za-z][A-Za-z0-9_]*)\s*\}\}'),
-      (match) => input.isEmpty ? '[${match.group(1)}]' : input,
+      (match) {
+        final name = match.group(1)!.trim().toLowerCase();
+        return inputs[name] ?? '[${match.group(1)}]';
+      },
     );
     try {
       final output = await ProviderGateway().execute(
@@ -548,6 +882,7 @@ class PromptRepository {
         output: output,
         status: 'completed',
         createdAt: DateTime.now(),
+        inputs: inputs,
       );
       await _appendRun(run);
       return run;
@@ -560,6 +895,7 @@ class PromptRepository {
         status: 'failed',
         createdAt: DateTime.now(),
         error: error.toString(),
+        inputs: inputs,
       );
       await _appendRun(run);
       return run;
@@ -593,6 +929,7 @@ class PromptRepository {
                     : (folder == 'references' ? 'reference' : 'prompt')));
     var summary = '';
     final sourceRefs = <String>[];
+    final variables = <VariableCandidate>[];
     String? sourceLabel;
     String? mode;
     if (raw.startsWith('---')) {
@@ -613,6 +950,21 @@ class PromptRepository {
                   yaml['provenance']['adaptation'] is YamlMap
               ? yaml['provenance']['adaptation']['mode']?.toString()
               : null;
+          if (yaml['inputs'] is YamlList) {
+            for (final item in yaml['inputs'] as YamlList) {
+              if (item is YamlMap && item['name'] != null) {
+                variables.add(
+                  VariableCandidate(
+                    name: item['name'].toString(),
+                    original: '{{${item['name']}}}',
+                    type: item['type']?.toString() ?? 'string',
+                    required: item['required'] == true,
+                    defaultValue: item['default']?.toString() ?? '',
+                  ),
+                );
+              }
+            }
+          }
           if (yaml['provenance'] is YamlMap &&
               yaml['provenance']['source_refs'] is YamlList)
             sourceRefs.addAll(
@@ -630,6 +982,7 @@ class PromptRepository {
             summary: summary,
             sourceLabel: sourceLabel,
             sourceRefs: sourceRefs,
+            variables: variables,
             provenanceMode: mode,
           );
         } catch (_) {}
@@ -644,6 +997,7 @@ class PromptRepository {
       summary: summary,
       sourceLabel: sourceLabel,
       sourceRefs: sourceRefs,
+      variables: variables,
       provenanceMode: mode,
     );
   }
@@ -723,6 +1077,33 @@ class PromptRepository {
 }
 
 class ProviderGateway {
+  static List<ProviderCapability> capabilities() => [
+    ProviderCapability(
+      name: 'Local preview',
+      models: ['deterministic'],
+      supportsLiveRun: true,
+      costLabel: 'offline',
+    ),
+    ProviderCapability(
+      name: 'OpenAI',
+      models: ['gpt-5-mini'],
+      supportsLiveRun: true,
+      costLabel: 'uses your API key',
+    ),
+    ProviderCapability(
+      name: 'Claude',
+      models: ['claude-3-5-sonnet-latest'],
+      supportsLiveRun: true,
+      costLabel: 'uses your API key',
+    ),
+    ProviderCapability(
+      name: 'Gemini',
+      models: ['gemini-2.5-flash'],
+      supportsLiveRun: true,
+      costLabel: 'uses your API key',
+    ),
+  ];
+
   Future<String> execute({
     required String provider,
     required String prompt,

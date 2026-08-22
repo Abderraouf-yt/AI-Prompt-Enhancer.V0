@@ -52,6 +52,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
   final editorController = TextEditingController();
   final runInputController = TextEditingController();
   final projectTitleController = TextEditingController();
+  final Map<String, TextEditingController> variableControllers = {};
   final projectDescriptionController = TextEditingController();
 
   List<ProjectInfo> projects = [];
@@ -61,6 +62,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
   String provider = 'Local preview';
   String search = '';
   String? errorMessage;
+  Entitlement entitlement = Entitlement();
   bool loading = true;
   bool saving = false;
   int section = 0;
@@ -79,6 +81,9 @@ class _WorkspacePageState extends State<WorkspacePage> {
     searchController.dispose();
     editorController.dispose();
     runInputController.dispose();
+    for (final controller in variableControllers.values) {
+      controller.dispose();
+    }
     projectTitleController.dispose();
     projectDescriptionController.dispose();
     super.dispose();
@@ -89,6 +94,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
     try {
       await repository.init();
       await _reloadFromRepository();
+      entitlement = await repository.loadEntitlement();
     } catch (error) {
       errorMessage = 'Workspace unavailable: $error';
     } finally {
@@ -122,6 +128,15 @@ class _WorkspacePageState extends State<WorkspacePage> {
   void _selectAsset(AssetRecord asset) {
     selectedAsset = asset;
     editorController.text = asset.content;
+    for (final controller in variableControllers.values) {
+      controller.dispose();
+    }
+    variableControllers.clear();
+    for (final variable in asset.variables) {
+      variableControllers[variable.name] = TextEditingController(
+        text: variable.defaultValue,
+      );
+    }
   }
 
   Future<void> _createProject() async {
@@ -152,6 +167,59 @@ class _WorkspacePageState extends State<WorkspacePage> {
     await _openImport(text, 'Clipboard');
   }
 
+  Future<void> _importUrl() async {
+    if (!entitlement.canImportUrl) {
+      await _showUpgradeDialog(
+        'URL and GitHub capture is a Pro feature after your free captures.',
+      );
+      return;
+    }
+    final controller = TextEditingController();
+    final url = await showDialog<String>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Import from URL'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(
+            hintText: 'https://github.com/... or a public web page',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, controller.text.trim()),
+            child: const Text('Fetch'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (url == null || url.isEmpty) return;
+    try {
+      _showMessage('Fetching a safe public URL…');
+      final text = await repository.fetchSafeUrl(url);
+      final nextEntitlement = Entitlement(
+        tier: entitlement.tier,
+        urlImportsUsed: entitlement.urlImportsUsed + 1,
+        urlImportLimit: entitlement.urlImportLimit,
+      );
+      entitlement = nextEntitlement;
+      await repository.saveEntitlement(nextEntitlement);
+      await repository.recordEvent(
+        'url_capture_started',
+        properties: {'source': 'url'},
+      );
+      await _openImport(text, url, sourceUrl: url);
+    } catch (error) {
+      _showMessage('URL import failed: $error');
+    }
+  }
+
   Future<void> _importFile() async {
     final picked = await FilePicker.platform.pickFiles(
       withData: true,
@@ -173,8 +241,25 @@ class _WorkspacePageState extends State<WorkspacePage> {
     await _openImport(text, file.name);
   }
 
-  Future<void> _openImport(String raw, String sourceLabel) async {
+  Future<void> _openImport(
+    String raw,
+    String sourceLabel, {
+    String? sourceUrl,
+  }) async {
+    await repository.recordEvent(
+      'capture_review_opened',
+      properties: {'method': sourceUrl == null ? 'clipboard-or-file' : 'url'},
+    );
     final analysis = await repository.analyzeImport(raw, sourceLabel);
+    final candidate = AssetRecord(
+      id: 'capture:candidate',
+      kind: analysis.suggestedKind,
+      title: analysis.title,
+      path: '',
+      content: analysis.raw,
+      variables: analysis.variables,
+    );
+    final relatedAssets = await repository.findRelatedAssets(candidate);
     if (!mounted) return;
     final saved = await showModalBottomSheet<AssetRecord>(
       context: context,
@@ -183,6 +268,8 @@ class _WorkspacePageState extends State<WorkspacePage> {
         analysis: analysis,
         repository: repository,
         existingAssets: assets,
+        relatedAssets: relatedAssets,
+        sourceUrl: sourceUrl,
         projectTitle: projects.isEmpty
             ? 'Current project'
             : projects.first.title,
@@ -193,6 +280,13 @@ class _WorkspacePageState extends State<WorkspacePage> {
     await _reloadFromRepository();
     _selectAsset(saved);
     if (mounted) setState(() {});
+    await repository.recordEvent(
+      'asset_saved',
+      properties: {
+        'kind': saved.kind,
+        'has_variables': saved.variables.isNotEmpty,
+      },
+    );
     _showMessage('Saved as a new asset. The original was preserved.');
   }
 
@@ -201,7 +295,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
     if (asset == null) return;
     setState(() => saving = true);
     try {
-      await File(asset.path).writeAsString(editorController.text);
+      await repository.updateAsset(asset, editorController.text);
       await _reloadFromRepository();
       _showMessage('Saved to the canonical project file.');
     } catch (error) {
@@ -218,13 +312,24 @@ class _WorkspacePageState extends State<WorkspacePage> {
       return;
     }
     _showMessage('Running…');
+    final inputs = <String, String>{
+      for (final entry in variableControllers.entries)
+        entry.key: entry.value.text,
+    };
+    if (inputs.isEmpty && runInputController.text.trim().isNotEmpty) {
+      inputs['input'] = runInputController.text.trim();
+    }
     final run = await repository.runAsset(
       asset,
       provider: provider,
-      input: runInputController.text,
+      inputs: inputs,
     );
     await _reloadFromRepository();
     if (!mounted) return;
+    await repository.recordEvent(
+      'run_completed',
+      properties: {'provider': provider, 'status': run.status},
+    );
     await showDialog<void>(
       context: context,
       builder: (_) => AlertDialog(
@@ -262,6 +367,38 @@ class _WorkspacePageState extends State<WorkspacePage> {
     await showDialog<void>(
       context: context,
       builder: (_) => const ProviderSettingsDialog(),
+    );
+  }
+
+  Future<void> _showUpgradeDialog(String reason) async {
+    await repository.recordEvent(
+      'upgrade_viewed',
+      properties: {'reason': reason},
+    );
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Keep reusing without friction'),
+        content: Text(
+          '$reason\n\nPro is planned to include unlimited URL/GitHub capture, version restore, cross-device sync, and multi-provider comparison. The local free path stays exportable.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Not now'),
+          ),
+          FilledButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _showMessage(
+                'Upgrade checkout will be connected after entitlement backend validation.',
+              );
+            },
+            child: const Text('See Pro'),
+          ),
+        ],
+      ),
     );
   }
 
@@ -347,21 +484,20 @@ class _WorkspacePageState extends State<WorkspacePage> {
       children: [
         Expanded(child: _mainSurface()),
         NavigationBar(
-          selectedIndex: section.clamp(0, 4),
+          selectedIndex: section.clamp(0, 2),
           onDestinationSelected: (value) => setState(() => section = value),
           destinations: const [
             NavigationDestination(
-              icon: Icon(Icons.dashboard_outlined),
-              selectedIcon: Icon(Icons.dashboard),
-              label: 'Home',
+              icon: Icon(Icons.inbox_outlined),
+              selectedIcon: Icon(Icons.inbox),
+              label: 'Inbox',
             ),
-            NavigationDestination(icon: Icon(Icons.search), label: 'Find'),
             NavigationDestination(
-              icon: Icon(Icons.account_tree_outlined),
-              label: 'Flows',
+              icon: Icon(Icons.collections_bookmark_outlined),
+              selectedIcon: Icon(Icons.collections_bookmark),
+              label: 'Library',
             ),
             NavigationDestination(icon: Icon(Icons.history), label: 'Runs'),
-            NavigationDestination(icon: Icon(Icons.sync), label: 'Sync'),
           ],
         ),
       ],
@@ -419,12 +555,21 @@ class _WorkspacePageState extends State<WorkspacePage> {
               ),
             ),
           const SizedBox(height: 22),
-          _navTile(Icons.dashboard_outlined, 'Overview', 0),
-          _navTile(Icons.search, 'Find & reuse', 1),
-          _navTile(Icons.description_outlined, 'Documents', 2),
-          _navTile(Icons.account_tree_outlined, 'Promptflows', 3),
-          _navTile(Icons.history, 'Runs & outputs', 4),
-          _navTile(Icons.sync, 'Sync center', 5),
+          _navTile(Icons.inbox_outlined, 'Inbox', 0),
+          _navTile(Icons.collections_bookmark_outlined, 'Library', 1),
+          _navTile(Icons.history, 'Runs', 2),
+          const SizedBox(height: 18),
+          Text(
+            'POWER TOOLS',
+            style: TextStyle(
+              color: Colors.white.withOpacity(.45),
+              fontSize: 10,
+              fontWeight: FontWeight.bold,
+              letterSpacing: 1.2,
+            ),
+          ),
+          const SizedBox(height: 6),
+          _navTile(Icons.build_outlined, 'Workflows & sync', 3),
           const Spacer(),
           FilledButton.icon(
             onPressed: _createProject,
@@ -486,16 +631,16 @@ class _WorkspacePageState extends State<WorkspacePage> {
   }
 
   Widget _content() {
-    if (section == 3 || section == 4) return _runsView();
-    if (section == 5) return _syncView();
-    final showHero = section == 0 || section == 1;
+    if (section == 2) return _runsView();
+    if (section == 3) return _powerToolsView();
+    final showHero = section == 0;
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(24, 20, 24, 34),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (showHero) _hero(),
-          if (section == 0 || section == 1 || section == 2) _searchBar(),
+          if (section == 1) _searchBar(),
           const SizedBox(height: 20),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -512,7 +657,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
           ),
           const SizedBox(height: 12),
           if (filteredAssets.isEmpty) _emptyState() else _assetList(),
-          if (selectedAsset != null && (section == 0 || section == 2)) ...[
+          if (selectedAsset != null && (section == 0 || section == 1)) ...[
             const SizedBox(height: 24),
             _editorCard(),
           ],
@@ -583,8 +728,51 @@ class _WorkspacePageState extends State<WorkspacePage> {
                   side: const BorderSide(color: Colors.white54),
                 ),
               ),
+              OutlinedButton.icon(
+                onPressed: _importUrl,
+                icon: const Icon(Icons.link),
+                label: const Text('Import URL'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.white,
+                  side: const BorderSide(color: Colors.white54),
+                ),
+              ),
             ],
           ),
+          const SizedBox(height: 14),
+          _planBanner(),
+        ],
+      ),
+    );
+  }
+
+  Widget _planBanner() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(.12),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              entitlement.isPro
+                  ? 'Pro plan active'
+                  : 'Free plan • ${entitlement.urlImportLimit - entitlement.urlImportsUsed} URL captures left',
+              style: const TextStyle(color: Colors.white, fontSize: 12),
+            ),
+          ),
+          if (!entitlement.isPro)
+            TextButton(
+              onPressed: () => _showUpgradeDialog(
+                'Unlock the full capture loop across devices.',
+              ),
+              child: const Text(
+                'See Pro',
+                style: TextStyle(color: Colors.white),
+              ),
+            ),
         ],
       ),
     );
@@ -774,24 +962,46 @@ class _WorkspacePageState extends State<WorkspacePage> {
               ),
             ),
             const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
+            if (asset.variables.isNotEmpty) ...[
+              Text(
+                'Test inputs',
+                style: Theme.of(context).textTheme.titleSmall
+                    ?.copyWith(fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(height: 8),
+              ...asset.variables.map(
+                (variable) => Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
                   child: TextField(
-                    controller: runInputController,
-                    decoration: const InputDecoration(
-                      labelText: 'Run input',
-                      prefixIcon: Icon(Icons.input),
+                    controller: variableControllers[variable.name],
+                    decoration: InputDecoration(
+                      labelText: variable.name,
+                      hintText: variable.required ? 'Required' : 'Optional',
                     ),
                   ),
                 ),
+              ),
+              const SizedBox(height: 4),
+            ] else
+              TextField(
+                controller: runInputController,
+                decoration: const InputDecoration(
+                  labelText: 'Optional test input',
+                  prefixIcon: Icon(Icons.input),
+                ),
+              ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
                 const SizedBox(width: 10),
                 DropdownButton<String>(
                   value: provider,
-                  items: const ['Local preview', 'OpenAI', 'Claude', 'Gemini']
+                  items: ProviderGateway.capabilities()
                       .map(
-                        (value) =>
-                            DropdownMenuItem(value: value, child: Text(value)),
+                        (capability) => DropdownMenuItem(
+                          value: capability.name,
+                          child: Text(capability.name),
+                        ),
                       )
                       .toList(),
                   onChanged: (value) =>
@@ -1028,20 +1238,58 @@ class _WorkspacePageState extends State<WorkspacePage> {
     );
   }
 
-  Widget _syncView() {
+  Widget _powerToolsView() {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
-      child: _simplePanel(
-        Icons.sync,
-        'Sync center',
-        'Projects are stored locally first. Google Drive remains an explicit, recoverable layer around the canonical folder.',
-        OutlinedButton.icon(
-          onPressed: () => _showMessage(
-            'Sync setup is not enabled in this MVP build; local files remain portable.',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Power tools',
+            style: Theme.of(context).textTheme.headlineSmall
+                ?.copyWith(fontWeight: FontWeight.w800),
           ),
-          icon: const Icon(Icons.info_outline),
-          label: const Text('View sync status'),
-        ),
+          const SizedBox(height: 8),
+          Text(
+            'Keep advanced engineering features available without making them part of the first-use experience.',
+            style: TextStyle(color: Colors.grey.shade700, height: 1.45),
+          ),
+          const SizedBox(height: 18),
+          _simplePanel(
+            Icons.account_tree_outlined,
+            'Workflows',
+            'Turn a saved asset into a draft flow when you are ready to automate it.',
+            FilledButton.icon(
+              onPressed: _createWorkflow,
+              icon: const Icon(Icons.add),
+              label: const Text('Create from selected asset'),
+            ),
+          ),
+          const SizedBox(height: 12),
+          _simplePanel(
+            Icons.sync,
+            'Sync',
+            'Cloud backup and conflict-safe sync will live here when enabled for your plan.',
+            OutlinedButton.icon(
+              onPressed: () => _showMessage(
+                'Sync is a Power tool and is not enabled in this local-first MVP.',
+              ),
+              icon: const Icon(Icons.info_outline),
+              label: const Text('View status'),
+            ),
+          ),
+          const SizedBox(height: 12),
+          _simplePanel(
+            Icons.tune,
+            'Provider settings',
+            'Add provider keys only when you are ready to run with a live model.',
+            OutlinedButton.icon(
+              onPressed: _openProviderSettings,
+              icon: const Icon(Icons.key),
+              label: const Text('Manage provider keys'),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -1170,12 +1418,16 @@ class ImportAdaptationSheet extends StatefulWidget {
     required this.analysis,
     required this.repository,
     required this.existingAssets,
+    required this.relatedAssets,
+    this.sourceUrl,
     required this.projectTitle,
     required this.provider,
   });
   final ImportAnalysis analysis;
   final PromptRepository repository;
   final List<AssetRecord> existingAssets;
+  final List<RelatedAsset> relatedAssets;
+  final String? sourceUrl;
   final String projectTitle;
   final String provider;
 
@@ -1202,6 +1454,7 @@ class _ImportAdaptationSheetState extends State<ImportAdaptationSheet> {
       mode: mode,
       convertVariables: convertVariables,
       projectContext: includeContext ? widget.projectTitle : null,
+      sourceUrl: widget.sourceUrl,
       composeWith: composeWith,
     );
     if (mounted) Navigator.pop(context, asset);
@@ -1326,6 +1579,48 @@ class _ImportAdaptationSheetState extends State<ImportAdaptationSheet> {
                     _action('Save as instruction', 'instruction', Icons.rule),
                   ],
                 ),
+                if (widget.relatedAssets.isNotEmpty) ...[
+                  const SizedBox(height: 16),
+                  Card(
+                    elevation: 0,
+                    color: const Color(0xFFF7F6FF),
+                    child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Reuse suggestions',
+                            style: TextStyle(fontWeight: FontWeight.w800),
+                          ),
+                          const SizedBox(height: 6),
+                          const Text(
+                            'Existing assets with shared wording or variables.',
+                            style: TextStyle(fontSize: 12),
+                          ),
+                          const SizedBox(height: 8),
+                          Wrap(
+                            spacing: 6,
+                            runSpacing: 6,
+                            children: widget.relatedAssets
+                                .map(
+                                  (related) => ChoiceChip(
+                                    label: Text(
+                                      '${related.asset.title} · ${related.reason}',
+                                    ),
+                                    selected: composeId == related.asset.id,
+                                    onSelected: (_) => setState(
+                                      () => composeId = related.asset.id,
+                                    ),
+                                  ),
+                                )
+                                .toList(),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 16),
                 DropdownButtonFormField<String>(
                   initialValue: destination,

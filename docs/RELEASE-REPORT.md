@@ -2,11 +2,11 @@
 
 ## Delivered product slice
 
-The repository now contains a runnable Flutter application for the local-first Promptflow OS MVP. The new UX is centered on **Reuse Before Recreate** rather than manual prompt authoring. Users can create/open a project, search existing assets, paste a prompt, import Markdown/TXT/YAML/JSON, detect structure and variables, inspect a concise understanding card, adapt to the current project, convert candidates to `{{variables}}`, save as a new prompt/template/context/instruction/reference, combine one existing workspace asset, preserve the raw original capture, inspect provenance, edit the saved asset, create a workflow draft, run a local preview, configure provider keys securely, and call the OpenAI, Anthropic, or Gemini API path when credentials are configured.
+The repository now contains a runnable Flutter application for the local-first Promptflow OS MVP. The refactored UX is centered on **Reuse Before Recreate** through three primary surfaces: **Inbox**, **Library**, and **Runs**. Users can paste a prompt, import a local file or safe public URL, detect structure and variables, see deterministic reuse suggestions, choose a recommended save action, preserve the raw capture, inspect provenance, edit a saved asset with revision metadata, enter per-variable test values, run a local preview or configured provider, copy the result, and keep advanced workflows/sync under Power tools.
 
 ## Architecture changes made
 
-The approved architecture remains intact at its boundaries. The only implementation-driven correction is that the first runnable slice uses `.promptworkspace/index.json` as a derived index instead of SQLite/FTS5. The index interface remains replaceable, and the canonical project files remain Markdown/YAML. Import adaptation adds only metadata and transient proposal behavior needed for origin, source references, adaptation mode, changed sections, detected variables, and raw capture preservation. No vector database, agent runtime, recommendation service, or mandatory backend was introduced.
+The approved architecture remains intact at its boundaries. The implementation-driven correction remains that the runnable slice uses `.promptworkspace/index.json` as a derived index instead of SQLite/FTS5. The index interface remains replaceable, and the canonical project files remain Markdown/YAML. The refactor adds capture records, safe URL fetching with redirect/size/private-target checks, revision-safe canonical updates, deterministic related-asset ranking, provider capability metadata, local entitlement gating, and privacy-safe product events. No vector database, agent runtime, checkout backend, or mandatory account was introduced.
 
 ## Validation results
 
@@ -14,12 +14,12 @@ The approved architecture remains intact at its boundaries. The only implementat
 |---|---|
 | Dart formatting | Pass |
 | Static analysis | Pass with non-fatal lint/deprecation infos; status 0 with `--no-fatal-infos` |
-| Service tests | Pass: structure detection, variable extraction, provider assumption detection, missing-information detection, content hash |
-| Widget tests | Pass: root application render |
+| Service tests | Pass: structure detection, variable extraction, provider assumption detection, missing-information detection, content hash, URL safety, entitlement boundaries, run-input serialization, revision frontmatter preservation |
+| Widget tests | Pass: root application render after Inbox/Library/Runs refactor |
 | Linux release build | Pass: `build/linux/x64/release/bundle/promptflow_os` |
 | Linux launch smoke | Pass: executable stayed alive for the 20-second headless smoke window |
 | Android release build | Pass: `build/app/outputs/flutter-apk/app-release.apk` |
-| GitHub publication | Pass: commit `ee9ea60` pushed to `Abderraouf-yt/AI-Prompt-Enhancer.V0` |
+| GitHub publication | Pending final refactor commit after this report is committed |
 
 ## Windows and device validation
 
@@ -27,8 +27,8 @@ A Windows Flutter target and reproducible PowerShell build script are included. 
 
 ## Explicitly not claimed as complete
 
-Production Google Drive synchronization, full Promptflow graph execution with bounded loops, deterministic evaluation suites, Git snapshots, signed Windows packaging, real-time collaboration, and a marketplace are not represented as implemented in this repository. The documentation labels them as planned work so the final package matches actual behavior.
+Production Google Drive synchronization, full Promptflow graph execution with bounded loops, deterministic evaluation suites, Git snapshots, signed Windows packaging, real-time collaboration, checkout, authoritative account entitlements, and a marketplace are not represented as implemented in this repository. The local Pro gate and event log are explicitly a monetization foundation, not billing. The documentation labels them as planned work so the final package matches actual behavior.
 
 ## Next production-candidate work
 
-The next implementation slice should add schema-validated workflow execution and bounded loops, replace the JSON index with SQLite/FTS5 only if profiling justifies it, implement the existing Drive conflict protocol, add deterministic evaluation suites, and run the Windows packaging script on a Windows build agent. The current reuse-first slice is the foundation for those capabilities because saved assets already carry stable IDs, provenance, variables, and workflow references.
+The next implementation slice should add an authoritative entitlement API and checkout, device share-in tests, version restore UI, provider adapter fixtures, schema-validated workflow execution, and bounded loops. SQLite/FTS5 should replace the JSON index only if profiling justifies it; Drive sync and team features should follow demonstrated repeat reuse. The current slice is the foundation because saved assets carry stable IDs, provenance, variables, and workflow references.

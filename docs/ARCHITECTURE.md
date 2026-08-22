@@ -4,6 +4,10 @@
 
 ```text
 Flutter UI
+  ├── Inbox capture and review
+  ├── Library search and edit
+  ├── Runs and outputs
+  └── Power tools
   ↓
 PromptRepository + UI application services
   ↓
@@ -23,7 +27,7 @@ ProviderGateway
 Native secure storage for credentials
 ```
 
-The repository is deliberately local-first. Project files are the source of truth. The index can be deleted and rebuilt by opening the project. The original imported material is captured before adaptation so a user can recover the exact source.
+The repository is deliberately local-first. Project files are the source of truth. The index can be deleted and rebuilt by opening the project. The original imported material is captured before adaptation so a user can recover the exact source. Local `entitlement.json` and `events.jsonl` are product-operation artifacts, not authoritative billing records and not canonical content.
 
 ## Reuse Before Recreate
 
@@ -36,6 +40,10 @@ Composition is intentionally lightweight. The user may select one existing index
 ## Provider boundary
 
 The UI separates local preview from live provider execution. The provider gateway resolves API keys from `flutter_secure_storage`, never from the project folder. OpenAI uses a Responses API request, Anthropic uses a Messages API request, and Gemini uses a `generateContent` request. Provider-specific response parsing is isolated in the gateway. Unsupported or failed network calls are recorded as failed runs with a user-readable message.
+
+## Revenue boundary
+
+The MVP includes a local feature gate for a limited free URL-capture allowance, a Pro upgrade explanation, and privacy-safe funnel events. There is no checkout, account service, or server-authoritative entitlement yet. A future backend can replace the local entitlement file without changing the canonical asset model.
 
 ## Known implementation boundary
 

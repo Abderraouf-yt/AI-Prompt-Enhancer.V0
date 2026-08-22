@@ -23,9 +23,12 @@ The canonical project structure is:
 ├── references/
 ├── assets/
 ├── runs/history.json
-└── .promptworkspace/
+├── .promptworkspace/
     ├── imports/
-    └── index.json
+    ├── index.json
+    ├── captures.jsonl
+    ├── events.jsonl
+    └── entitlement.json
 ```
 
 The canonical files remain ordinary Markdown and YAML. `.promptworkspace/index.json`, `runs/history.json`, and the import capture copies are derived or operational artifacts. Credentials are stored through `flutter_secure_storage` and are not written to project files, exports, or run outputs.
@@ -58,19 +61,20 @@ A Linux release smoke build is available at `build/linux/x64/release/bundle/` wh
 
 ## First-use flow
 
-Open the app and create a project if the default workspace is empty. Press **Paste prompt** or **Import file**. The capture view detects the likely kind, objective, sections, variables, constraints, dependencies, provider assumptions, hard-coded candidates, and missing information. Choose **Use as-is**, **Adapt to project**, **Convert to template**, **Extract components**, **Combine**, or a destination type. The source is preserved under `.promptworkspace/imports/`, while the accepted result becomes a new canonical Markdown asset with provenance.
+Open the app and start in **Inbox**. A personal local workspace is created automatically. Press **Paste prompt**, **Import file**, or **Import URL**. The capture view detects the likely kind, objective, sections, variables, constraints, dependencies, provider assumptions, hard-coded candidates, and missing information. It also surfaces deterministic reuse suggestions from the existing library. Choose the recommended save action first; advanced destinations such as context, instruction, composition, and workflow remain available as secondary options. The source is preserved under `.promptworkspace/imports/`, while the accepted result becomes a new canonical Markdown asset with provenance.
 
-Select an asset to edit it, copy it, add it to a workflow draft, or run it. **Local preview** is deterministic and works offline. Selecting OpenAI, Claude, or Gemini uses the corresponding API adapter if a key has been saved in **Provider settings**. Consumer-interface delivery remains explicit copy/export rather than private-site automation.
+Use **Library** to search and edit saved assets. Select a template to enter each variable separately, run **Local preview** offline, copy the result, or choose a live provider. Selecting OpenAI, Claude, or Gemini uses the corresponding adapter if a key has been saved in **Provider settings**. **Runs** keeps redacted execution metadata and variable inputs. Consumer-interface delivery remains explicit copy/export rather than private-site automation.
 
 ## Architecture status
 
 The implementation preserves the approved separation between canonical files, derived index, promptflow/domain services, provider adapters, secure credentials, and UI. The MVP uses a JSON derived index to minimize native dependency and shipping friction; the schema and documentation keep the index interface replaceable by SQLite/FTS5 when profiling shows that repository scale requires it.
 
-Google Drive synchronization, bounded graph execution beyond workflow draft generation, evaluation suites, Git snapshots, and production Windows/Android installers remain planned work in the architecture package. They are not presented by this README as implemented features.
+Google Drive synchronization, bounded graph execution beyond workflow draft generation, evaluation suites, Git snapshots, checkout, authoritative account entitlements, and production Windows/Android installers remain planned work in the architecture package. The MVP includes only a local entitlement/event foundation and does not present it as billing.
 
 ## Tests and validation
 
-The repository contains a Flutter smoke test for the application root. The implementation should be extended with service-level tests for import detection, template conversion, provenance preservation, workflow serialization, provider error normalization, and conflict-safe sync before a production release. The original architecture planning package and expanded acceptance matrix are available in `/home/ubuntu/promptflow-os-plan/` in the development environment.
+The repository contains service and widget tests for import detection, URL safety, entitlement boundaries, per-variable run records, revision frontmatter preservation, provider assumptions, and root rendering. Before a production release, add device-level share-in tests, provider fixture tests, and conflict-safe sync tests.
+ The original architecture planning package and expanded acceptance matrix are available in `/home/ubuntu/promptflow-os-plan/` in the development environment.
 
 ## Security notes
 
