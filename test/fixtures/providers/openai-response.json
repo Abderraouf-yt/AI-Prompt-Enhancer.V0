@@ -1,0 +1,8 @@
+{
+  "id": "resp_fixture_001",
+  "output_text": "A concise normalized provider response.",
+  "usage": {
+    "input_tokens": 12,
+    "output_tokens": 8
+  }
+}

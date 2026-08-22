@@ -1,0 +1,45 @@
+schema: workflow/v1
+id: workflow:demo-review-flow
+title: Demo review flow
+description: A minimal promptflow generated from the content review prompt.
+status: draft
+inputs:
+  draft:
+    type: string
+    required: true
+    secret: false
+outputs:
+  review:
+    type: string
+    required: true
+    secret: false
+nodes:
+  - id: review
+    type: prompt
+    label: Content review
+    ref: prompt:demo-content-review
+    inputs:
+      draft: $input.draft
+    outputs:
+      review:
+        type: string
+        required: true
+        secret: false
+  - id: output
+    type: output
+    label: Return review
+    inputs:
+      review: $review.review
+    outputs:
+      review:
+        type: string
+        required: true
+        secret: false
+edges:
+  - from: input.draft
+    to: review.draft
+  - from: review.review
+    to: output.review
+error_policy:
+  on_unhandled_error: fail
+  max_total_provider_calls: 1

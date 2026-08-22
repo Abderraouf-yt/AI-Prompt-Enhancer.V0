@@ -1,0 +1,26 @@
+name: promptflow_os
+description: "Promptflow OS — local-first AI work engineering workspace"
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.13.1
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  crypto: ^3.0.7
+  file_picker: ^10.3.7
+  flutter_secure_storage: ^9.2.4
+  http: ^1.5.0
+  path_provider: ^2.1.5
+  yaml: ^3.1.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true

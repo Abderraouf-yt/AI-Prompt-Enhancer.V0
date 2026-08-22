@@ -1,0 +1,18 @@
+schema: project/v1
+id: project:demo-content-workspace
+slug: demo-content-workspace
+title: Demo content workspace
+description: A portable project for testing prompt reuse and template conversion.
+created_at: '2026-08-22T00:00:00Z'
+updated_at: '2026-08-22T00:00:00Z'
+status: active
+default_locale: en-US
+owner_scope: personal
+tags: [example, reuse]
+entrypoints:
+  readme: README.md
+conventions:
+  link_style: both
+  line_endings: lf
+  index_path: .promptworkspace/index.json
+  runs_retention: keep

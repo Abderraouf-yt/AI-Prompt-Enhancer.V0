@@ -1,0 +1,255 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://promptflow-os.dev/schema/document-frontmatter/v1",
+  "title": "Promptflow OS document frontmatter v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "id",
+    "kind",
+    "title",
+    "created_at",
+    "updated_at",
+    "status",
+    "tags"
+  ],
+  "properties": {
+    "schema": {
+      "const": "document/v1"
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^(prompt|context|instruction|template|reference|evaluation|test):[A-Za-z0-9_-]{6,80}$"
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "prompt",
+        "context",
+        "instruction",
+        "template",
+        "reference",
+        "evaluation",
+        "test"
+      ]
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 240
+    },
+    "summary": {
+      "type": "string",
+      "maxLength": 1000
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "active",
+        "experimental",
+        "deprecated",
+        "archived",
+        "invalid"
+      ]
+    },
+    "tags": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9._/-]{0,63}$"
+      }
+    },
+    "inputs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/variable"
+      }
+    },
+    "outputs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/variable"
+      }
+    },
+    "uses": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/objectRef"
+      }
+    },
+    "references": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/objectRef"
+      }
+    },
+    "derived_from": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/objectRef"
+      }
+    },
+    "supersedes": {
+      "$ref": "#/$defs/objectRef"
+    },
+    "message_blocks": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/messageBlock"
+      }
+    },
+    "sensitivity": {
+      "type": "string",
+      "enum": ["public", "internal", "confidential", "restricted"]
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "source_type": {
+          "type": "string",
+          "enum": ["authored", "imported", "generated", "derived", "composed"]
+        },
+        "source_uri": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "content_hash": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "source_label": {
+          "type": "string",
+          "maxLength": 240
+        },
+        "source_refs": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/objectRef"}
+        },
+        "imported_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "adaptation": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "mode": {
+              "type": "string",
+              "enum": ["as-is", "adapted", "template", "extracted", "composed", "workflow-node"]
+            },
+            "project_id": {
+              "type": "string",
+              "pattern": "^project:[A-Za-z0-9_-]{6,80}$"
+            },
+            "target_provider": {
+              "type": "string",
+              "maxLength": 100
+            },
+            "changed_sections": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": {"type": "string", "maxLength": 160}
+            }
+          }
+        }
+      }
+    },
+    "import_analysis": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "suggested_kind": {
+          "type": "string",
+          "enum": ["prompt", "template", "context", "instruction", "workflow", "asset", "reference"]
+        },
+        "objective": {"type": "string", "maxLength": 2000},
+        "detected_variables": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/variable"}
+        },
+        "detected_sections": {
+          "type": "array",
+          "items": {"type": "string", "maxLength": 160}
+        },
+        "missing_information": {
+          "type": "array",
+          "items": {"type": "string", "maxLength": 500}
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    }
+  },
+  "$defs": {
+    "objectRef": {
+      "type": "string",
+      "pattern": "^(prompt|context|instruction|template|reference|evaluation|test|workflow|asset):[A-Za-z0-9_-]{6,80}$"
+    },
+    "variable": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "type", "required", "secret"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+        },
+        "type": {
+          "type": "string",
+          "enum": ["string", "number", "integer", "boolean", "object", "array", "json"]
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "secret": {
+          "type": "boolean"
+        },
+        "default": {},
+        "description": {
+          "type": "string",
+          "maxLength": 1000
+        }
+      }
+    },
+    "messageBlock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "content"],
+      "properties": {
+        "role": {
+          "type": "string",
+          "enum": ["system", "developer", "user", "tool"]
+        },
+        "content": {
+          "type": "string"
+        },
+        "content_type": {
+          "type": "string",
+          "enum": ["text", "template", "reference"]
+        },
+        "ref": {
+          "$ref": "#/$defs/objectRef"
+        }
+      }
+    }
+  }
+}

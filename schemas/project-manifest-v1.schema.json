@@ -1,0 +1,143 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://promptflow-os.dev/schema/project-manifest/v1",
+  "title": "Promptflow OS project manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "id",
+    "slug",
+    "title",
+    "description",
+    "created_at",
+    "updated_at",
+    "status",
+    "default_locale"
+  ],
+  "properties": {
+    "schema": {
+      "const": "project/v1"
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^project:[A-Za-z0-9_-]{6,80}$"
+    },
+    "slug": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,79}$"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160
+    },
+    "description": {
+      "type": "string",
+      "maxLength": 4000
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["draft", "active", "archived"]
+    },
+    "default_locale": {
+      "type": "string",
+      "pattern": "^[a-z]{2}(-[A-Z]{2})?$"
+    },
+    "owner_scope": {
+      "type": "string",
+      "enum": ["personal", "shared"]
+    },
+    "tags": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9._/-]{0,63}$"
+      }
+    },
+    "entrypoints": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "default_workflow": {
+          "$ref": "#/$defs/objectRef"
+        },
+        "readme": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "conventions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "link_style": {
+          "type": "string",
+          "enum": ["markdown", "wikilink", "both"]
+        },
+        "line_endings": {
+          "type": "string",
+          "enum": ["lf", "crlf"]
+        },
+        "index_path": {
+          "type": "string",
+          "const": ".promptworkspace/index.json"
+        },
+        "runs_retention": {
+          "type": "string",
+          "enum": ["keep", "prune-manually", "prune-after-release"]
+        }
+      }
+    },
+    "provider_profiles": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/providerProfile"
+      }
+    }
+  },
+  "$defs": {
+    "objectRef": {
+      "type": "string",
+      "pattern": "^(prompt|context|instruction|workflow|evaluation|test|reference|asset):[A-Za-z0-9_-]{6,80}$"
+    },
+    "providerProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "adapter", "model", "credential_ref"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^profile:[A-Za-z0-9_-]{6,80}$"
+        },
+        "adapter": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{1,63}$"
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "credential_ref": {
+          "type": "string",
+          "pattern": "^credential:[A-Za-z0-9_-]{6,80}$"
+        },
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        }
+      }
+    }
+  }
+}
